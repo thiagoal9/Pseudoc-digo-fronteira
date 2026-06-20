@@ -1,4 +1,7 @@
+# Sistema Automatizado de Vigilância de Fronteira
+## Pseudocódigo Completo — AV Final IAC
 
+```
 DEFINIR VALOR_SUSPEITO = R$ 10.000,00
 DEFINIR JANELA_HORAS = 72
 DEFINIR PRECISAO_FACIAL = 95%
@@ -6,7 +9,8 @@ DEFINIR PRECISAO_PLACA = 90%
 DEFINIR TIMEOUT_GATEWAY = 5s
 DEFINIR BUFFER_OFFLINE_MAX = 500 registros
 
-##  — Leitura de placa
+
+-- Leitura de placa
 
 FUNÇÃO lerPlaca(foto):
   placa <- IA.lerPlaca(foto)
@@ -19,7 +23,8 @@ FUNÇÃO lerPlaca(foto):
   FIM SE
 FIM FUNÇÃO
 
-## — Reconhecimento facial
+
+-- Reconhecimento facial
 
 FUNÇÃO identificarPessoa(foto):
   rosto <- IA.detectarRosto(foto)
@@ -33,7 +38,8 @@ FUNÇÃO identificarPessoa(foto):
   FIM SE
 FIM FUNÇÃO
 
-## — Consulta ao banco de dados (com validação de schema)
+
+-- Consulta ao banco de dados (com validação de schema)
 
 FUNÇÃO validarSchema(registro, camposEsperados):
   PARA CADA campo EM camposEsperados FAÇA
@@ -45,8 +51,8 @@ FUNÇÃO validarSchema(registro, camposEsperados):
 FIM FUNÇÃO
 
 FUNÇÃO buscarDados(placa, pessoa):
-  veiculo  <- BD.buscar(CRIPTOGRAFAR(placa))
-  cadastro <- BD.buscar(CRIPTOGRAFAR(pessoa.CPF))
+  veiculo   <- BD.buscar(CRIPTOGRAFAR(placa))
+  cadastro  <- BD.buscar(CRIPTOGRAFAR(pessoa.CPF))
   historico <- BD.buscarViagens(pessoa.CPF)
 
   SE veiculo == NULO OU cadastro == NULO ENTÃO
@@ -62,7 +68,8 @@ FUNÇÃO buscarDados(placa, pessoa):
   RETORNAR { veiculo, cadastro, historico }
 FIM FUNÇÃO
 
-## — Análise financeira
+
+-- Análise financeira
 
 FUNÇÃO analisarBanco(CPF, dataViagem):
   transacoes <- BANCO.buscar(CPF, dataViagem - 72h, dataViagem + 72h)
@@ -83,7 +90,8 @@ FUNÇÃO analisarBanco(CPF, dataViagem):
   RETORNAR alertas
 FIM FUNÇÃO
 
-##  — Cálculo de risco
+
+-- Cálculo de risco
 
 FUNÇÃO calcularRisco(alertas, historico):
   pontos <- 0
@@ -97,7 +105,8 @@ FUNÇÃO calcularRisco(alertas, historico):
   CASO CONTRARIO       RETORNAR 'BAIXO'
 FIM FUNÇÃO
 
-##  — Alerta à PRF (com transporte seguro)
+
+-- Alerta à PRF (com transporte seguro)
 
 FUNÇÃO alertarPRF(pessoa, veiculo, alertas, risco):
   SE risco == 'ALTO' OU risco == 'MEDIO' ENTÃO
@@ -120,9 +129,8 @@ FUNÇÃO alertarPRF(pessoa, veiculo, alertas, risco):
   FIM SE
 FIM FUNÇÃO
 
----
 
-## — Loop principal (com contingência de energia)
+-- Loop principal (com contingência de energia)
 
 INÍCIO
   ENQUANTO sistema.ligado FAÇA
@@ -153,3 +161,4 @@ INÍCIO
 
   FIM ENQUANTO
 FIM
+```
