@@ -1,210 +1,155 @@
-```java
 
-SISTEMA DE VIGILÂNCIA DE FRONTEIRA PARAGUAI-BRASIL
+DEFINIR VALOR_SUSPEITO = R$ 10.000,00
+DEFINIR JANELA_HORAS = 72
+DEFINIR PRECISAO_FACIAL = 95%
+DEFINIR PRECISAO_PLACA = 90%
+DEFINIR TIMEOUT_GATEWAY = 5s
+DEFINIR BUFFER_OFFLINE_MAX = 500 registros
 
+##  — Leitura de placa
 
- CONSTANTES E CONFIGURAÇÕES 
+FUNÇÃO lerPlaca(foto):
+  placa <- IA.lerPlaca(foto)
+  precisao <- IA.precisao()
+  SE precisao >= PRECISAO_PLACA ENTÃO
+    RETORNAR placa
+  SENÃO
+    REGISTRAR erro('placa: precisão insuficiente')
+    RETORNAR NULO
+  FIM SE
+FIM FUNÇÃO
 
-DEFINIR LIMIAR_TRANSACAO_SUSPEITA = R$ 10.000,00
-DEFINIR JANELA_TEMPO_VIAGEM = 72 horas  // antes e depois da travessia
-DEFINIR CONFIANCA_MINIMA_FACIAL = 95%
-DEFINIR CONFIANCA_MINIMA_PLACA  = 90%
+## — Reconhecimento facial
 
-// MÓDULO 1: CAPTURA E LEITURA DE PLACA (OCR + IA) 
+FUNÇÃO identificarPessoa(foto):
+  rosto <- IA.detectarRosto(foto)
+  precisao <- IA.precisao()
+  SE precisao >= PRECISAO_FACIAL ENTÃO
+    pessoa <- BD.buscarPorRosto(rosto)
+    RETORNAR pessoa
+  SENÃO
+    REGISTRAR erro('facial: precisão insuficiente')
+    RETORNAR NULO
+  FIM SE
+FIM FUNÇÃO
 
-FUNÇÃO capturarPlaca(imagemCamera):
-    imagem ← câmera.capturarFrame()
-    placaTexto ← IA_OCR.reconhecer(imagem)
-    confianca ← IA_OCR.obterConfianca()
+## — Consulta ao banco de dados (com validação de schema)
 
-    SE confianca >= CONFIANCA_MINIMA_PLACA ENTÃO
-        RETORNAR placaTexto
-    SENÃO
-        REGISTRAR log("Placa ilegível - solicitar nova captura")
-        RETORNAR NULO
+FUNÇÃO validarSchema(registro, camposEsperados):
+  PARA CADA campo EM camposEsperados FAÇA
+    SE registro[campo] == NULO OU TIPO(registro[campo]) != campo.tipoEsperado ENTÃO
+      RETORNAR FALSO
     FIM SE
+  FIM PARA
+  RETORNAR VERDADEIRO
 FIM FUNÇÃO
 
+FUNÇÃO buscarDados(placa, pessoa):
+  veiculo  <- BD.buscar(CRIPTOGRAFAR(placa))
+  cadastro <- BD.buscar(CRIPTOGRAFAR(pessoa.CPF))
+  historico <- BD.buscarViagens(pessoa.CPF)
 
-// MÓDULO 2: RECONHECIMENTO FACIAL 
+  SE veiculo == NULO OU cadastro == NULO ENTÃO
+    RETORNAR NULO
+  FIM SE
 
-FUNÇÃO reconhecerFace(imagemOcupantes):
-    faces ← IA_FACIAL.detectarFaces(imagemOcupantes)
+  SE NÃO validarSchema(veiculo,  ['placa','modelo','cor']) OU
+     NÃO validarSchema(cadastro, ['CPF','nome','dataNasc']) ENTÃO
+    REGISTRAR erro('schema inválido: dado descartado')
+    RETORNAR NULO
+  FIM SE
 
-    PARA CADA face EM faces FAÇA
-        dadosBiometricos ← IA_FACIAL.extrairBiometria(face)
-        confianca ← IA_FACIAL.obterConfianca()
-
-        SE confianca >= CONFIANCA_MINIMA_FACIAL ENTÃO
-            pessoa ← bancoDados.buscarPorBiometria(dadosBiometricos)
-            RETORNAR pessoa
-        SENÃO
-            REGISTRAR log("Face não identificada com precisão")
-            RETORNAR NULO
-        FIM SE
-    FIM PARA
+  RETORNAR { veiculo, cadastro, historico }
 FIM FUNÇÃO
 
+## — Análise financeira
 
- // MÓDULO 3: CONSULTA AO BANCO DE DADOS 
+FUNÇÃO analisarBanco(CPF, dataViagem):
+  transacoes <- BANCO.buscar(CPF, dataViagem - 72h, dataViagem + 72h)
+  alertas <- []
 
-FUNÇÃO consultarDadosPessoa(placa, pessoa):
-    dadosVeiculo    ← bancoDados.buscarVeiculo(CRIPTOGRAFAR(placa))
-    dadosPessoa     ← bancoDados.buscarPessoa(CRIPTOGRAFAR(pessoa.CPF))
-    historicoViagem ← bancoDados.buscarViagens(pessoa.CPF)
-
-    SE dadosVeiculo == NULO OU dadosPessoa == NULO ENTÃO
-        REGISTRAR log("Dados não encontrados para: " + placa)
-        RETORNAR NULO
+  PARA CADA tx EM transacoes FAÇA
+    SE tx.valor >= VALOR_SUSPEITO ENTÃO
+      alertas.adicionar('VALOR_ALTO')
     FIM SE
+    SE saques24h(CPF) >= 5 ENTÃO
+      alertas.adicionar('FRACIONAMENTO')
+    FIM SE
+    SE tx.tipo == 'INTERNACIONAL' ENTÃO
+      alertas.adicionar('INTERNACIONAL')
+    FIM SE
+  FIM PARA
 
-    RETORNAR { dadosVeiculo, dadosPessoa, historicoViagem }
+  RETORNAR alertas
 FIM FUNÇÃO
 
+##  — Cálculo de risco
 
- // MÓDULO 4: ANÁLISE DE MOVIMENTAÇÕES BANCÁRIAS 
+FUNÇÃO calcularRisco(alertas, historico):
+  pontos <- 0
+  SE 'FRACIONAMENTO' EM alertas ENTÃO pontos <- pontos + 40
+  SE 'VALOR_ALTO'    EM alertas ENTÃO pontos <- pontos + 30
+  SE 'INTERNACIONAL' EM alertas ENTÃO pontos <- pontos + 20
+  SE historico.viagensMes >= 10  ENTÃO pontos <- pontos + 20
 
-FUNÇÃO analisarMovimentacoes(CPF, dataHoraTraversia):
-    movimentacoes ← bancoDados.buscarTransacoes(
-        CPF,
-        dataHoraTraversia - JANELA_TEMPO_VIAGEM,
-        dataHoraTraversia + JANELA_TEMPO_VIAGEM
-    )
-
-    alertas ← LISTA VAZIA
-
-    PARA CADA transacao EM movimentacoes FAÇA
-
-        // Critério 1: Valor elevado
-        SE transacao.valor >= LIMIAR_TRANSACAO_SUSPEITA ENTÃO
-            alertas.adicionar({
-                tipo: "VALOR_ELEVADO",
-                descricao: "Transação de " + transacao.valor + " próxima à viagem",
-                transacao: transacao
-            })
-        FIM SE
-
-        // Critério 2: Múltiplos saques fracionados (smurfing)
-        SE contarSaquesRecentes(CPF, 24h) >= 5 ENTÃO
-            alertas.adicionar({
-                tipo: "FRACIONAMENTO",
-                descricao: "Múltiplos saques em curto período",
-                transacao: transacao
-            })
-        FIM SE
-
-        // Critério 3: Transferência internacional
-        SE transacao.tipo == "INTERNACIONAL" ENTÃO
-            alertas.adicionar({
-                tipo: "TRANSFERENCIA_INTERNACIONAL",
-                descricao: "Movimentação internacional detectada",
-                transacao: transacao
-            })
-        FIM SE
-
-    FIM PARA
-
-    RETORNAR alertas
+  SE pontos >= 70 ENTÃO RETORNAR 'ALTO'
+  SE pontos >= 40 ENTÃO RETORNAR 'MEDIO'
+  CASO CONTRARIO       RETORNAR 'BAIXO'
 FIM FUNÇÃO
 
+##  — Alerta à PRF (com transporte seguro)
 
-// MÓDULO 5: AVALIAÇÃO DE RISCO 
+FUNÇÃO alertarPRF(pessoa, veiculo, alertas, risco):
+  SE risco == 'ALTO' OU risco == 'MEDIO' ENTÃO
+    conexao <- REDE.abrirConexao(servidorPRF, protocolo='HTTPS', tls='1.3')
 
-FUNÇÃO calcularNivelRisco(alertas, historicoViagem):
-    pontuacao ← 0
-
-    PARA CADA alerta EM alertas FAÇA
-        SE alerta.tipo == "VALOR_ELEVADO"             ENTÃO pontuacao ← pontuacao + 30
-        SE alerta.tipo == "FRACIONAMENTO"             ENTÃO pontuacao ← pontuacao + 40
-        SE alerta.tipo == "TRANSFERENCIA_INTERNACIONAL" ENTÃO pontuacao ← pontuacao + 20
-    FIM PARA
-
-    // Histórico de viagens frequentes aumenta suspeita
-    SE historicoViagem.frequenciaMensal >= 10 ENTÃO
-        pontuacao ← pontuacao + 20
+    SE conexao == NULO ENTÃO
+      REGISTRAR erro('falha ao abrir conexão segura com a PRF')
+      bufferOffline.adicionar({ pessoa, veiculo, alertas, risco })
+      RETORNAR
     FIM SE
 
-    SE pontuacao >= 70 ENTÃO RETORNAR "ALTO"
-    SE pontuacao >= 40 ENTÃO RETORNAR "MÉDIO"
-    CASO CONTRÁRIO       RETORNAR "BAIXO"
+    PRF.enviar(conexao, {
+      pessoa:  CRIPTOGRAFAR(pessoa),
+      veiculo: CRIPTOGRAFAR(veiculo),
+      alertas: CRIPTOGRAFAR(alertas),
+      acao:    'INTERCEPTAR'
+    })
+  SENÃO
+    REGISTRAR log('Risco baixo, sem acao')
+  FIM SE
 FIM FUNÇÃO
 
+---
 
- // MÓDULO 6: GERAÇÃO DE ALERTA À PRF 
-
-FUNÇÃO gerarAlertaPRF(dadosPessoa, dadosVeiculo, alertas, nivelRisco):
-    SE nivelRisco == "ALTO" OU nivelRisco == "MÉDIO" ENTÃO
-
-        alerta ← {
-            timestamp:    obterDataHora(),
-            prioridade:   nivelRisco,
-            veiculo:      CRIPTOGRAFAR(dadosVeiculo),
-            pessoa:       CRIPTOGRAFAR(dadosPessoa),
-            movimentacoes: CRIPTOGRAFAR(alertas),
-            acao:         "INTERCEPTAR E INVESTIGAR"
-        }
-
-        PRF.enviarAlerta(alerta)
-        REGISTRAR log("Alerta " + nivelRisco + " enviado à PRF para: " + dadosPessoa.nome)
-
-    SENÃO
-        REGISTRAR log("Nível de risco BAIXO - nenhuma ação necessária")
-    FIM SE
-FIM FUNÇÃO
-
-
- // MÓDULO 7: FLUXO PRINCIPAL DO SISTEMA 
-
-FUNÇÃO principal():
-    ENQUANTO sistema.ativo FAÇA
-
-        // 1. Captura de dados na fronteira
-        imagemPlaca     ← câmera.capturarPlaca()
-        imagemOcupantes ← câmera.capturarOcupantes()
-        dataHoraAtual   ← obterDataHora()
-
-        // 2. Reconhecimento via IA
-        placa  ← capturarPlaca(imagemPlaca)
-        pessoa ← reconhecerFace(imagemOcupantes)
-
-        SE placa == NULO OU pessoa == NULO ENTÃO
-            CONTINUAR  // Próximo veículo
-        FIM SE
-
-        // 3. Consulta ao banco de dados (dados criptografados)
-        dados ← consultarDadosPessoa(placa, pessoa)
-
-        SE dados == NULO ENTÃO
-            CONTINUAR
-        FIM SE
-
-         Análise financeira
-        alertas ← analisarMovimentacoes(dados.dadosPessoa.CPF, dataHoraAtual)
-
-        // 5. Avaliação de risco
-        nivelRisco ← calcularNivelRisco(alertas, dados.historicoViagem)
-
-        // 6. Ação conforme risco detectado
-        gerarAlertaPRF(dados.dadosPessoa, dados.dadosVeiculo, alertas, nivelRisco)
-
-        // 7. Registrar a passagem (auditoria)
-        REGISTRAR auditoria({
-            dataHora:  dataHoraAtual,
-            placa:     CRIPTOGRAFAR(placa),
-            pessoa:    CRIPTOGRAFAR(pessoa.CPF),
-            risco:     nivelRisco
-        })
-
-    FIM ENQUANTO
-FIM FUNÇÃO
-
-
- //INICIALIZAÇÃO 
+## — Loop principal (com contingência de energia)
 
 INÍCIO
-    sistema.inicializar()
-    bancoDados.conectar(conexaoCriptografada)
-    câmera.ativar()
-    principal()
+  ENQUANTO sistema.ligado FAÇA
+
+    SE energia.status == 'FALHA' ENTÃO
+      energia.acionarBackup()
+    FIM SE
+
+    placa  <- lerPlaca(câmera.frente())
+    pessoa <- identificarPessoa(câmera.interna())
+
+    SE placa == NULO OU pessoa == NULO ENTÃO CONTINUAR FIM SE
+
+    dados <- buscarDados(placa, pessoa)
+    SE dados == NULO ENTÃO CONTINUAR FIM SE
+
+    alertas <- analisarBanco(dados.CPF, agora())
+    risco   <- calcularRisco(alertas, dados.historico)
+
+    alertarPRF(dados.pessoa, dados.veiculo, alertas, risco)
+
+    SE rede.status == 'OFFLINE' ENTÃO
+      bufferOffline.salvar(placa, pessoa.CPF, risco)
+    SENÃO
+      REGISTRAR auditoria(placa, pessoa.CPF, risco)
+      bufferOffline.sincronizarPendentes()
+    FIM SE
+
+  FIM ENQUANTO
 FIM
-```
